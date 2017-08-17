@@ -255,7 +255,7 @@ namespace succinct { namespace mapper {
     }
 
     template <typename T>
-    size_t freeze(T& val, std::ostream& out, uint64_t flags = 0, const char* friendly_name = "<TOP>")
+    uint64_t freeze(T& val, std::ostream& out, uint64_t flags = 0, const char* friendly_name = "<TOP>")
     {
         detail::freeze_visitor freezer(out, flags);
         freezer(val, friendly_name);
@@ -263,7 +263,7 @@ namespace succinct { namespace mapper {
     }
 
     template <typename T>
-    size_t freeze(T& val, const char* filename, uint64_t flags = 0, const char* friendly_name = "<TOP>")
+    uint64_t freeze(T& val, const char* filename, uint64_t flags = 0, const char* friendly_name = "<TOP>")
     {
         std::ofstream fout;
         fout.exceptions(std::ifstream::failbit);
@@ -272,7 +272,7 @@ namespace succinct { namespace mapper {
     }
 
     template <typename T>
-    size_t map(T& val, const char* base_address, uint64_t flags = 0, const char* friendly_name = "<TOP>")
+    uint64_t map(T& val, const char* base_address, uint64_t flags = 0, const char* friendly_name = "<TOP>")
     {
         detail::map_visitor mapper(base_address, flags);
         mapper(val, friendly_name);
@@ -280,7 +280,7 @@ namespace succinct { namespace mapper {
     }
 
     template <typename T>
-    size_t map(T& val, boost::iostreams::mapped_file_source const& m, uint64_t flags = 0, const char* friendly_name = "<TOP>")
+    uint64_t map(T& val, boost::iostreams::mapped_file_source const& m, uint64_t flags = 0, const char* friendly_name = "<TOP>")
     {
         return map(val, m.data(), flags, friendly_name);
     }
