@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <ostream>
 
 #include <boost/make_shared.hpp>
 #include <boost/utility/enable_if.hpp>
@@ -12,6 +13,9 @@
 #include "mappable_vector.hpp"
 
 namespace succinct { namespace mapper {
+
+    #define NEED_TO_ALIGN4(v) (4 - ((v) % 4))
+    #define ALIGN4_PTR(v) { uint32_t x = (uint64_t)(v) % 4; if (x > 0) (v) += 4 - x; }
 
     struct freeze_flags {
         // enum {
@@ -34,7 +38,7 @@ namespace succinct { namespace mapper {
         {}
 
         std::string name;
-        size_t size;
+        uint64_t size;
         std::vector<size_node_ptr> children;
 
         void dump(std::ostream& os = std::cerr, size_t depth = 0) {
@@ -50,13 +54,13 @@ namespace succinct { namespace mapper {
     namespace detail {
         class freeze_visitor : boost::noncopyable {
         public:
-            freeze_visitor(std::ofstream& fout, uint64_t flags)
-                : m_fout(fout)
+            freeze_visitor(std::ostream& out, uint64_t flags)
+                : m_out(out)
                 , m_flags(flags)
                 , m_written(0)
             {
                 // Save freezing flags
-                m_fout.write(reinterpret_cast<const char*>(&m_flags), sizeof(m_flags));
+                m_out.write(reinterpret_cast<const char*>(&m_flags), sizeof(m_flags));
                 m_written += sizeof(m_flags);
             }
 
@@ -70,8 +74,17 @@ namespace succinct { namespace mapper {
             template <typename T>
             typename boost::enable_if<boost::is_pod<T>, freeze_visitor&>::type
             operator()(T& val, const char* /* friendly_name */) {
-                m_fout.write(reinterpret_cast<const char*>(&val), sizeof(T));
+                m_out.write(reinterpret_cast<const char*>(&val), sizeof(T));
                 m_written += sizeof(T);
+
+                const uint32_t padding = NEED_TO_ALIGN4(m_written);
+                if (padding > 0 && padding < 4)
+                {
+                  static uint32_t const zero = 0;
+                  m_out.write(reinterpret_cast<const char*>(&zero), padding);
+                  m_written += padding;
+                }
+
                 return *this;
             }
 
@@ -81,18 +94,26 @@ namespace succinct { namespace mapper {
                 (*this)(vec.m_size, "size");
 
                 size_t n_bytes = static_cast<size_t>(vec.m_size * sizeof(T));
-                m_fout.write(reinterpret_cast<const char*>(vec.m_data), long(n_bytes));
+                m_out.write(reinterpret_cast<const char*>(vec.m_data), long(n_bytes));
                 m_written += n_bytes;
+
+                const uint32_t padding = NEED_TO_ALIGN4(m_written);
+                if (padding > 0 && padding < 4)
+                {
+                  static uint32_t const zero = 0;
+                  m_out.write(reinterpret_cast<const char*>(&zero), padding);
+                  m_written += padding;
+                }
 
                 return *this;
             }
 
-            size_t written() const {
+            uint64_t written() const {
                 return m_written;
             }
 
         protected:
-            std::ofstream& m_fout;
+            std::ostream& m_out;
             const uint64_t m_flags;
             uint64_t m_written;
         };
@@ -120,6 +141,8 @@ namespace succinct { namespace mapper {
             operator()(T& val, const char* /* friendly_name */) {
                 val = *reinterpret_cast<const T*>(m_cur);
                 m_cur += sizeof(T);
+
+                ALIGN4_PTR(m_cur);
                 return *this;
             }
 
@@ -141,11 +164,12 @@ namespace succinct { namespace mapper {
                 }
 
                 m_cur += bytes;
+                ALIGN4_PTR(m_cur);
                 return *this;
             }
 
-            size_t bytes_read() const {
-                return size_t(m_cur - m_base);
+            uint64_t bytes_read() const {
+                return uint64_t(m_cur - m_base);
             }
 
         protected:
@@ -168,7 +192,7 @@ namespace succinct { namespace mapper {
             template <typename T>
             typename boost::disable_if<boost::is_pod<T>, sizeof_visitor&>::type
             operator()(T& val, const char* friendly_name) {
-                size_t checkpoint = m_size;
+                uint64_t checkpoint = m_size;
                 size_node_ptr parent_node;
                 if (m_cur_size_node) {
                     parent_node = m_cur_size_node;
@@ -195,9 +219,9 @@ namespace succinct { namespace mapper {
             template<typename T>
             sizeof_visitor&
             operator()(mappable_vector<T>& vec, const char* friendly_name) {
-                size_t checkpoint = m_size;
+                uint64_t checkpoint = m_size;
                 (*this)(vec.m_size, "size");
-                m_size += static_cast<size_t>(vec.m_size * sizeof(T));
+                m_size += static_cast<uint64_t>(vec.m_size * sizeof(T));
 
                 if (m_cur_size_node) {
                     make_node(friendly_name)->size = m_size - checkpoint;
@@ -206,7 +230,7 @@ namespace succinct { namespace mapper {
                 return *this;
             }
 
-            size_t size() const {
+            uint64_t size() const {
                 return m_size;
             }
 
@@ -216,7 +240,6 @@ namespace succinct { namespace mapper {
             }
 
         protected:
-
             size_node_ptr make_node(const char* name)
             {
                 size_node_ptr node = boost::make_shared<size_node>();
@@ -225,16 +248,16 @@ namespace succinct { namespace mapper {
                 return node;
             }
 
-            size_t m_size;
+            uint64_t m_size;
             size_node_ptr m_cur_size_node;
         };
 
     }
 
     template <typename T>
-    size_t freeze(T& val, std::ofstream& fout, uint64_t flags = 0, const char* friendly_name = "<TOP>")
+    size_t freeze(T& val, std::ostream& out, uint64_t flags = 0, const char* friendly_name = "<TOP>")
     {
-        detail::freeze_visitor freezer(fout, flags);
+        detail::freeze_visitor freezer(out, flags);
         freezer(val, friendly_name);
         return freezer.written();
     }
@@ -242,7 +265,9 @@ namespace succinct { namespace mapper {
     template <typename T>
     size_t freeze(T& val, const char* filename, uint64_t flags = 0, const char* friendly_name = "<TOP>")
     {
-        std::ofstream fout(filename, std::ios::binary);
+        std::ofstream fout;
+        fout.exceptions(std::ifstream::failbit);
+        fout.open(filename, std::ios::binary);
         return freeze(val, fout, flags, friendly_name);
     }
 
@@ -261,7 +286,7 @@ namespace succinct { namespace mapper {
     }
 
     template <typename T>
-    size_t size_of(T& val)
+    uint64_t size_of(T& val)
     {
         detail::sizeof_visitor sizer;
         sizer(val, "");

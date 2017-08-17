@@ -51,7 +51,7 @@ namespace succinct {
             other.m_nibbles.swap(m_nibbles);
         }
 
-        size_t size() const {
+        uint64_t size() const {
             return m_size;
         }
 
@@ -61,7 +61,7 @@ namespace succinct {
         }
 
     protected:
-        size_t m_size;
+        uint64_t m_size;
         mapper::mappable_vector<uint8_t> m_nibbles;
     };
 
